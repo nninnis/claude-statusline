@@ -158,7 +158,7 @@ cwd=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // ""')
 
 git_root=$(git rev-parse --show-toplevel 2>/dev/null)
 if [ -n "$git_root" ]; then
-  dir=$(basename "$git_root")
+  dir=$(echo "$git_root" | sed "s|^$HOME|~|")
   branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
   branch="${branch:-HEAD}"
 
@@ -178,7 +178,7 @@ if [ -n "$git_root" ]; then
 
   row2="${dir} | ${branch}${git_icons}"
 else
-  dir=$(basename "${cwd:-$(pwd)}")
+  dir=$(echo "${cwd:-$(pwd)}" | sed "s|^$HOME|~|")
   row2="$dir"
 fi
 
