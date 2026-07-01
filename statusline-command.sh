@@ -86,6 +86,10 @@ else
 fi
 [ -n "$ctx_annotation" ] && model_name="${model_name} (${ctx_annotation})"
 
+# ── effort level ──────────────────────────────────────────────────────────────
+effort_level=$(echo "$input" | jq -r '.effort.level // empty')
+[ -n "$effort_level" ] && model_name="${model_name} ${effort_level}"
+
 # ── rate limits ───────────────────────────────────────────────────────────────
 five_pct=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
 five_resets=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
