@@ -41,14 +41,14 @@ bar() {
   filled_str=""
   i=0
   while [ "$i" -lt "$filled" ]; do
-    filled_str="${filled_str}▬"
+    filled_str="${filled_str}█"
     i=$((i + 1))
   done
 
   empty_str=""
   i=0
   while [ "$i" -lt "$empty" ]; do
-    empty_str="${empty_str}▬"
+    empty_str="${empty_str}█"
     i=$((i + 1))
   done
 
@@ -158,12 +158,12 @@ fi
 # ── context window ────────────────────────────────────────────────────────────
 ctx_pct=$(echo "$input" | jq -r '.context_window.used_percentage // empty')
 
-# ── build ctx segment (sits next to the model block) ──────────────────────────
+# ── build ctx segment (sits at the far right) ─────────────────────────────────
 ctx_seg=""
 if [ -n "$ctx_pct" ]; then
   ctx_pct_int=$(printf '%.0f' "$ctx_pct")
   ctx_bar=$(bar "$ctx_pct" 6)
-  ctx_seg="${ctx_bar} $(colorize "$ctx_pct" "${ctx_pct_int}%")"
+  ctx_seg="ctx ${ctx_bar} $(colorize "$ctx_pct" "${ctx_pct_int}%")"
 fi
 
 # ── build rate limits segment (session · week, each with its own bar) ────────
@@ -191,8 +191,8 @@ fi
 
 # ── assemble row 1 ────────────────────────────────────────────────────────────
 row1="$model_name"
-[ -n "$ctx_seg" ] && row1="${row1} ${ctx_seg}"
 [ -n "$rate_seg" ] && row1="${row1} | ${rate_seg}"
+[ -n "$ctx_seg" ] && row1="${row1} | ${ctx_seg}"
 
 # ── git info for row 2 ────────────────────────────────────────────────────────
 cwd=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // ""')
