@@ -41,23 +41,23 @@ bar() {
   filled_str=""
   i=0
   while [ "$i" -lt "$filled" ]; do
-    filled_str="${filled_str}█"
+    filled_str="${filled_str}▅"
     i=$((i + 1))
   done
 
   empty_str=""
   i=0
   while [ "$i" -lt "$empty" ]; do
-    empty_str="${empty_str}░"
+    empty_str="${empty_str}▅"
     i=$((i + 1))
   done
 
   if [ "$pct_int" -ge 75 ]; then
-    printf "\033[31m%s\033[0m\033[38;5;238m%s\033[0m" "$filled_str" "$empty_str"
+    printf "\033[38;5;203m%s\033[0m\033[38;5;238m%s\033[0m" "$filled_str" "$empty_str"
   elif [ "$pct_int" -ge 50 ]; then
     printf "\033[38;5;214m%s\033[0m\033[38;5;238m%s\033[0m" "$filled_str" "$empty_str"
   else
-    printf "\033[32m%s\033[0m\033[38;5;238m%s\033[0m" "$filled_str" "$empty_str"
+    printf "\033[38;5;76m%s\033[0m\033[38;5;238m%s\033[0m" "$filled_str" "$empty_str"
   fi
 }
 
@@ -107,7 +107,11 @@ if echo "$model_id" | grep -qE '^claude-[a-z]'; then
   family=$(echo "$model_id" | sed 's/^claude-//' | cut -d'-' -f1)
   rest=$(echo "$model_id" | sed "s/^claude-${family}-//")
   major=$(echo "$rest" | cut -d'-' -f1)
-  minor=$(echo "$rest" | cut -d'-' -f2)
+  if echo "$rest" | grep -q '-'; then
+    minor=$(echo "$rest" | cut -d'-' -f2)
+  else
+    minor=""
+  fi
   # If minor is empty or is an 8-digit date suffix, omit it
   if [ -z "$minor" ] || echo "$minor" | grep -qE '^[0-9]{8}$'; then
     version="$major"
@@ -158,27 +162,26 @@ ctx_pct=$(echo "$input" | jq -r '.context_window.used_percentage // empty')
 ctx_seg=""
 if [ -n "$ctx_pct" ]; then
   ctx_pct_int=$(printf '%.0f' "$ctx_pct")
-  ctx_text="ctx:${ctx_pct_int}%"
   ctx_bar=$(bar "$ctx_pct" 6)
-  ctx_seg="${ctx_bar} $(colorize "$ctx_pct" "$ctx_text")"
+  ctx_seg="${ctx_bar} $(colorize "$ctx_pct" "${ctx_pct_int}%")"
 fi
 
 # ── build rate limits segment (session · week, each with its own bar) ────────
 rate_seg=""
 if [ -n "$five_pct" ]; then
   five_pct_int=$(printf '%.0f' "$five_pct")
-  s_text="s:${five_pct_int}%"
-  [ -n "$five_time" ] && s_text="${s_text} ${five_time}"
   five_bar=$(bar "$five_pct" 6)
-  rate_seg="${five_bar} $(colorize "$five_pct" "$s_text")"
+  s_text="${five_pct_int}%"
+  [ -n "$five_time" ] && s_text="${s_text} ${five_time}"
+  rate_seg="s ${five_bar} $(colorize "$five_pct" "$s_text")"
 fi
 
 if [ -n "$week_pct" ]; then
   week_pct_int=$(printf '%.0f' "$week_pct")
-  w_text="w:${week_pct_int}%"
-  [ -n "$week_time" ] && w_text="${w_text} ${week_time}"
   week_bar=$(bar "$week_pct" 6)
-  w_colored="${week_bar} $(colorize "$week_pct" "$w_text")"
+  w_text="${week_pct_int}%"
+  [ -n "$week_time" ] && w_text="${w_text} ${week_time}"
+  w_colored="w ${week_bar} $(colorize "$week_pct" "$w_text")"
   if [ -n "$rate_seg" ]; then
     rate_seg="${rate_seg}  ${w_colored}"
   else
