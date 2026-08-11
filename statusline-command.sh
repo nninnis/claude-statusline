@@ -137,22 +137,20 @@ five_resets=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
 week_pct=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
 week_resets=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty')
 
-# Elapsed time for 5h session window
+# Remaining time until 5h session window resets
 five_time=""
 if [ -n "$five_resets" ]; then
   five_remaining=$(( five_resets - now ))
-  five_elapsed=$(( 18000 - five_remaining ))   # 5 * 3600 = 18000
-  [ "$five_elapsed" -lt 0 ] && five_elapsed=0
-  five_time=$(fmt_5h "$five_elapsed")
+  [ "$five_remaining" -lt 0 ] && five_remaining=0
+  five_time=$(fmt_5h "$five_remaining")
 fi
 
-# Elapsed time for 7d weekly window
+# Remaining time until 7d weekly window resets
 week_time=""
 if [ -n "$week_resets" ]; then
   week_remaining=$(( week_resets - now ))
-  week_elapsed=$(( 604800 - week_remaining ))  # 7 * 24 * 3600 = 604800
-  [ "$week_elapsed" -lt 0 ] && week_elapsed=0
-  week_time=$(fmt_7d "$week_elapsed")
+  [ "$week_remaining" -lt 0 ] && week_remaining=0
+  week_time=$(fmt_7d "$week_remaining")
 fi
 
 # ── context window ────────────────────────────────────────────────────────────
