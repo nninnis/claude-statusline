@@ -24,6 +24,43 @@ colorize() {
   fi
 }
 
+bar() {
+  # $1 = percentage (numeric, may be empty), $2 = width in chars (default 6)
+  pct=$1
+  width=${2:-6}
+  if [ -z "$pct" ] || [ "$pct" = "null" ]; then
+    return
+  fi
+  pct_int=$(printf '%.0f' "$pct")
+  [ "$pct_int" -gt 100 ] && pct_int=100
+  [ "$pct_int" -lt 0 ] && pct_int=0
+  filled=$(( (pct_int * width + 50) / 100 ))
+  [ "$filled" -gt "$width" ] && filled=$width
+  empty=$(( width - filled ))
+
+  filled_str=""
+  i=0
+  while [ "$i" -lt "$filled" ]; do
+    filled_str="${filled_str}█"
+    i=$((i + 1))
+  done
+
+  empty_str=""
+  i=0
+  while [ "$i" -lt "$empty" ]; do
+    empty_str="${empty_str}░"
+    i=$((i + 1))
+  done
+
+  if [ "$pct_int" -ge 75 ]; then
+    printf "\033[31m%s\033[0m\033[38;5;238m%s\033[0m" "$filled_str" "$empty_str"
+  elif [ "$pct_int" -ge 50 ]; then
+    printf "\033[38;5;214m%s\033[0m\033[38;5;238m%s\033[0m" "$filled_str" "$empty_str"
+  else
+    printf "\033[32m%s\033[0m\033[38;5;238m%s\033[0m" "$filled_str" "$empty_str"
+  fi
+}
+
 fmt_5h() {
   # format seconds as e.g. 3h24m or 45m
   secs=$1
@@ -117,20 +154,31 @@ fi
 # ── context window ────────────────────────────────────────────────────────────
 ctx_pct=$(echo "$input" | jq -r '.context_window.used_percentage // empty')
 
-# ── build rate limits segment ─────────────────────────────────────────────────
+# ── build ctx segment (sits next to the model block) ──────────────────────────
+ctx_seg=""
+if [ -n "$ctx_pct" ]; then
+  ctx_pct_int=$(printf '%.0f' "$ctx_pct")
+  ctx_text="ctx:${ctx_pct_int}%"
+  ctx_bar=$(bar "$ctx_pct" 6)
+  ctx_seg="${ctx_bar} $(colorize "$ctx_pct" "$ctx_text")"
+fi
+
+# ── build rate limits segment (session · week, each with its own bar) ────────
 rate_seg=""
 if [ -n "$five_pct" ]; then
   five_pct_int=$(printf '%.0f' "$five_pct")
   s_text="s:${five_pct_int}%"
   [ -n "$five_time" ] && s_text="${s_text} ${five_time}"
-  rate_seg=$(colorize "$five_pct" "$s_text")
+  five_bar=$(bar "$five_pct" 6)
+  rate_seg="${five_bar} $(colorize "$five_pct" "$s_text")"
 fi
 
 if [ -n "$week_pct" ]; then
   week_pct_int=$(printf '%.0f' "$week_pct")
   w_text="w:${week_pct_int}%"
   [ -n "$week_time" ] && w_text="${w_text} ${week_time}"
-  w_colored=$(colorize "$week_pct" "$w_text")
+  week_bar=$(bar "$week_pct" 6)
+  w_colored="${week_bar} $(colorize "$week_pct" "$w_text")"
   if [ -n "$rate_seg" ]; then
     rate_seg="${rate_seg}  ${w_colored}"
   else
@@ -138,23 +186,10 @@ if [ -n "$week_pct" ]; then
   fi
 fi
 
-# ── build ctx segment ─────────────────────────────────────────────────────────
-ctx_seg=""
-if [ -n "$ctx_pct" ]; then
-  ctx_pct_int=$(printf '%.0f' "$ctx_pct")
-  ctx_text="ctx: ${ctx_pct_int}%"
-  ctx_seg=$(colorize "$ctx_pct" "$ctx_text")
-fi
-
 # ── assemble row 1 ────────────────────────────────────────────────────────────
 row1="$model_name"
-if [ -n "$rate_seg" ] && [ -n "$ctx_seg" ]; then
-  row1="${row1} | ${rate_seg} | ${ctx_seg}"
-elif [ -n "$rate_seg" ]; then
-  row1="${row1} | ${rate_seg}"
-elif [ -n "$ctx_seg" ]; then
-  row1="${row1} | ${ctx_seg}"
-fi
+[ -n "$ctx_seg" ] && row1="${row1} ${ctx_seg}"
+[ -n "$rate_seg" ] && row1="${row1} | ${rate_seg}"
 
 # ── git info for row 2 ────────────────────────────────────────────────────────
 cwd=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // ""')

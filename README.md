@@ -3,11 +3,11 @@
 Claude Code 2-row statusline script.
 
 ```
-Opus 4.8 (1M) | s:8% 53m  w:3% 2d19h | ctx: 4%
+Opus 4.8 (1M) ▓░░░░░ ctx:4% | ▓░░░░░ s:8% 53m  ▓░░░░░ w:3% 2d19h
 SpaceCat | main ↑2
 ```
 
-**Row 1** — Model name · Session/weekly token usage · Context usage (amber ≥50%, red ≥75%)  
+**Row 1** — Model name · Context usage bar · Session/weekly usage bars with reset countdown (green <50%, amber ≥50%, red ≥75%)  
 **Row 2** — Repo or directory · Branch · Git sync status (↑ push, ↓ pull, ↕ diverged)
 
 ## Install
