@@ -41,14 +41,14 @@ bar() {
   filled_str=""
   i=0
   while [ "$i" -lt "$filled" ]; do
-    filled_str="${filled_str}▅"
+    filled_str="${filled_str}▬"
     i=$((i + 1))
   done
 
   empty_str=""
   i=0
   while [ "$i" -lt "$empty" ]; do
-    empty_str="${empty_str}▅"
+    empty_str="${empty_str}▬"
     i=$((i + 1))
   done
 

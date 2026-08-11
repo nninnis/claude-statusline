@@ -3,7 +3,7 @@
 Claude Code 2-row statusline script.
 
 ```
-Opus 4.8 (1M) ▅▅▅▅▅▅ 4% | s ▅▅▅▅▅▅ 8% 53m  w ▅▅▅▅▅▅ 3% 2d19h
+Opus 4.8 (1M) ▬▬▬▬▬▬ 4% | s ▬▬▬▬▬▬ 8% 53m  w ▬▬▬▬▬▬ 3% 2d19h
 SpaceCat | main ↑2
 ```
 
