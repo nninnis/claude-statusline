@@ -3,6 +3,11 @@ export GIT_OPTIONAL_LOCKS=0
 
 input=$(cat)
 now=$(date +%s)
+ESC=$(printf '\033')
+
+# How recently `git fetch` must have run for the ahead/behind arrows to be
+# trusted. Past this, they are dimmed — see the git section below.
+FETCH_FRESH_MIN=30
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -89,54 +94,58 @@ fmt_7d() {
   fi
 }
 
-# ── model name ────────────────────────────────────────────────────────────────
-raw_model_id=$(echo "$input" | jq -r '.model.id // ""')
-# Extract context-size annotation like [1m] before stripping brackets
-ctx_annotation=""
-bracket=$(echo "$raw_model_id" | grep -oE '\[[0-9]+[mMkK]\]' | head -1)
-if [ -n "$bracket" ]; then
-  # Normalise: extract the number+unit, uppercase the unit
-  inner=$(echo "$bracket" | tr -d '[]')
-  num=$(echo "$inner" | sed 's/[^0-9]//g')
-  unit=$(echo "$inner" | sed 's/[0-9]//g' | tr '[:lower:]' '[:upper:]')
-  ctx_annotation="${num}${unit}"
-fi
-model_id=$(echo "$raw_model_id" | sed 's/\[[^]]*\]//g')
+# ── parse input ───────────────────────────────────────────────────────────────
+# One jq call for every field. A process per field costs ~44ms each on Windows,
+# which dominated the whole script. The model name is derived here too, for the
+# same reason: it used to take a grep/sed/cut/awk chain.
+#
+# `claude-opus-5[1m]` -> `Opus 5 (1M)`, and a trailing 8-digit date is dropped so
+# `claude-opus-4-5-20250929` -> `Opus 4.5`. Anything that is not a `claude-<name>`
+# id falls back to the display name.
+eval "$(printf '%s' "$input" | jq -r '
+  (.model.id // "") as $raw
+  | ($raw | capture("\\[(?<n>[0-9]+)(?<u>[mMkK])\\]") // null) as $ann
+  | ($raw | gsub("\\[[^\\]]*\\]"; "")) as $id
+  | (if ($id | test("^claude-[a-z]"))
+     then ($id | ltrimstr("claude-") | split("-")) as $part
+       | (($part[0] // "") | (.[0:1] | ascii_upcase) + .[1:]) as $family
+       | ($part[1] // "") as $major
+       | ($part[2] // "") as $minor
+       | (if $minor == "" or ($minor | test("^[0-9]{8}$"))
+          then $major
+          else $major + "." + $minor
+          end) as $version
+       | ($family + " " + $version)
+     else (.model.display_name // "?")
+     end) as $name
+  | @sh "model_name=\($name + (if $ann
+                               then " (" + $ann.n + ($ann.u | ascii_upcase) + ")"
+                               else "" end))",
+    @sh "effort_level=\(.effort.level // "")",
+    @sh "fast_mode=\(.fast_mode // false)",
+    @sh "five_pct=\(.rate_limits.five_hour.used_percentage // 0)",
+    @sh "five_resets=\(.rate_limits.five_hour.resets_at // "")",
+    @sh "week_pct=\(.rate_limits.seven_day.used_percentage // 0)",
+    @sh "week_resets=\(.rate_limits.seven_day.resets_at // "")",
+    @sh "ctx_pct=\(.context_window.used_percentage // 0)",
+    @sh "cost_usd=\(.cost.total_cost_usd // 0)",
+    @sh "cwd=\(.workspace.current_dir // .cwd // "")",
+    @sh "pr_num=\(.pr.number // "")",
+    @sh "pr_state=\(.pr.review_state // "")"
+' 2>/dev/null)"
 
-if echo "$model_id" | grep -qE '^claude-[a-z]'; then
-  family=$(echo "$model_id" | sed 's/^claude-//' | cut -d'-' -f1)
-  rest=$(echo "$model_id" | sed "s/^claude-${family}-//")
-  major=$(echo "$rest" | cut -d'-' -f1)
-  if echo "$rest" | grep -q '-'; then
-    minor=$(echo "$rest" | cut -d'-' -f2)
-  else
-    minor=""
-  fi
-  # If minor is empty or is an 8-digit date suffix, omit it
-  if [ -z "$minor" ] || echo "$minor" | grep -qE '^[0-9]{8}$'; then
-    version="$major"
-  else
-    version="${major}.${minor}"
-  fi
-  cap=$(echo "$family" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')
-  case "$family" in
-    *)    model_name="${cap} ${version}" ;;
-  esac
-else
-  model_name=$(echo "$input" | jq -r '.model.display_name // "?"')
-fi
-[ -n "$ctx_annotation" ] && model_name="${model_name} (${ctx_annotation})"
+# jq produces nothing at all if the input is not valid JSON
+[ -n "$model_name" ] || model_name="?"
+[ -n "$five_pct" ] || five_pct=0
+[ -n "$week_pct" ] || week_pct=0
+[ -n "$ctx_pct" ] || ctx_pct=0
+[ -n "$cost_usd" ] || cost_usd=0
 
-# ── effort level ──────────────────────────────────────────────────────────────
-effort_level=$(echo "$input" | jq -r '.effort.level // empty')
+# ── effort level and fast mode ────────────────────────────────────────────────
 [ -n "$effort_level" ] && model_name="${model_name} ${effort_level}"
+[ "$fast_mode" = "true" ] && model_name="${model_name} ⚡"
 
 # ── rate limits ───────────────────────────────────────────────────────────────
-five_pct=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
-five_resets=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
-week_pct=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
-week_resets=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty')
-
 # Remaining time until 5h session window resets
 five_time=""
 if [ -n "$five_resets" ]; then
@@ -153,72 +162,99 @@ if [ -n "$week_resets" ]; then
   week_time=$(fmt_7d "$week_remaining")
 fi
 
-# ── context window ────────────────────────────────────────────────────────────
-ctx_pct=$(echo "$input" | jq -r '.context_window.used_percentage // empty')
-
-# ── build ctx segment (sits at the far right) ─────────────────────────────────
-ctx_seg=""
-if [ -n "$ctx_pct" ]; then
-  ctx_pct_int=$(printf '%.0f' "$ctx_pct")
-  ctx_bar=$(bar "$ctx_pct" 6)
-  ctx_seg="ctx ${ctx_bar} $(colorize "$ctx_pct" "${ctx_pct_int}%")"
-fi
+# ── build ctx segment (right after the model block) ───────────────────────────
+ctx_pct_int=$(printf '%.0f' "$ctx_pct")
+ctx_seg="ctx $(bar "$ctx_pct" 6) $(colorize "$ctx_pct" "${ctx_pct_int}%")"
 
 # ── build rate limits segment (session · week, each with its own bar) ────────
-rate_seg=""
-if [ -n "$five_pct" ]; then
-  five_pct_int=$(printf '%.0f' "$five_pct")
-  five_bar=$(bar "$five_pct" 6)
-  s_text="${five_pct_int}%"
-  [ -n "$five_time" ] && s_text="${s_text} ${five_time}"
-  rate_seg="s ${five_bar} $(colorize "$five_pct" "$s_text")"
-fi
+five_pct_int=$(printf '%.0f' "$five_pct")
+s_text="${five_pct_int}%"
+[ -n "$five_time" ] && s_text="${s_text} ${five_time}"
 
-if [ -n "$week_pct" ]; then
-  week_pct_int=$(printf '%.0f' "$week_pct")
-  week_bar=$(bar "$week_pct" 6)
-  w_text="${week_pct_int}%"
-  [ -n "$week_time" ] && w_text="${w_text} ${week_time}"
-  w_colored="w ${week_bar} $(colorize "$week_pct" "$w_text")"
-  if [ -n "$rate_seg" ]; then
-    rate_seg="${rate_seg}  ${w_colored}"
-  else
-    rate_seg="$w_colored"
-  fi
-fi
+week_pct_int=$(printf '%.0f' "$week_pct")
+w_text="${week_pct_int}%"
+[ -n "$week_time" ] && w_text="${w_text} ${week_time}"
+
+rate_seg="s $(bar "$five_pct" 6) $(colorize "$five_pct" "$s_text")"
+rate_seg="${rate_seg}  w $(bar "$week_pct" 6) $(colorize "$week_pct" "$w_text")"
+
+# ── session cost ──────────────────────────────────────────────────────────────
+cost_seg=$(printf '$%.2f' "$cost_usd")
 
 # ── assemble row 1 ────────────────────────────────────────────────────────────
-row1="$model_name"
-[ -n "$rate_seg" ] && row1="${row1} | ${rate_seg}"
-[ -n "$ctx_seg" ] && row1="${row1} | ${ctx_seg}"
+row1="${model_name} | ${ctx_seg} | ${rate_seg} | ${cost_seg}"
 
 # ── git info for row 2 ────────────────────────────────────────────────────────
-cwd=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // ""')
 [ -n "$cwd" ] && [ -d "$cwd" ] && cd "$cwd" 2>/dev/null
 
-git_root=$(git rev-parse --show-toplevel 2>/dev/null)
-if [ -n "$git_root" ]; then
-  dir=$(echo "$git_root" | sed "s|^$HOME|~|")
+NL='
+'
+git_info=$(git rev-parse --show-toplevel --git-dir 2>/dev/null)
+if [ -n "$git_info" ]; then
+  git_root=${git_info%%"$NL"*}
+  git_dir=${git_info#*"$NL"}
+
+  case "$git_root" in
+    "$HOME"*) dir="~${git_root#"$HOME"}" ;;
+    *)        dir="$git_root" ;;
+  esac
+
   branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
   branch="${branch:-HEAD}"
 
   ahead=$(git rev-list --count @{u}..HEAD 2>/dev/null)
   behind=$(git rev-list --count HEAD..@{u} 2>/dev/null)
 
-  git_icons=""
-  if [ -n "$ahead" ] && [ -n "$behind" ] && [ "$ahead" -gt 0 ] && [ "$behind" -gt 0 ]; then
-    # diverged — show single ↕ in amber
-    git_icons=" $(printf '\033[38;5;214m\xe2\x86\x95\033[0m')"
+  # `@{u}` is a local snapshot of the remote that only `git fetch` refreshes, so
+  # a stale FETCH_HEAD means "behind 0" may just mean "haven't looked lately".
+  # Dim the arrows when that snapshot is old, and show ↻ when there are no
+  # arrows to dim — otherwise the untrustworthy case looks exactly like in-sync.
+  if [ -n "$(find "$git_dir/FETCH_HEAD" -mmin "-$FETCH_FRESH_MIN" 2>/dev/null)" ]; then
+    c_ahead="${ESC}[34m"
+    c_behind="${ESC}[32m"
+    c_both="${ESC}[38;5;214m"
+    stale=""
   else
-    [ -n "$ahead" ] && [ "$ahead" -gt 0 ] && \
-      git_icons="${git_icons} $(printf '\033[34m\xe2\x86\x91%s\033[0m' "$ahead")"
-    [ -n "$behind" ] && [ "$behind" -gt 0 ] && \
-      git_icons="${git_icons} $(printf '\033[32m\xe2\x86\x93%s\033[0m' "$behind")"
+    c_ahead="${ESC}[38;5;244m"
+    c_behind="$c_ahead"
+    c_both="$c_ahead"
+    stale=1
   fi
 
-  row2="${dir} | ${branch}${git_icons}"
+  git_icons=""
+  if [ -n "$ahead" ] && [ -n "$behind" ]; then
+    if [ "$ahead" -gt 0 ] && [ "$behind" -gt 0 ]; then
+      # diverged — show a single ↕
+      git_icons=" $(printf '%s\xe2\x86\x95\033[0m' "$c_both")"
+    else
+      [ "$ahead" -gt 0 ] && \
+        git_icons="${git_icons} $(printf '%s\xe2\x86\x91%s\033[0m' "$c_ahead" "$ahead")"
+      [ "$behind" -gt 0 ] && \
+        git_icons="${git_icons} $(printf '%s\xe2\x86\x93%s\033[0m' "$c_behind" "$behind")"
+    fi
+    [ -z "$git_icons" ] && [ -n "$stale" ] && \
+      git_icons=" $(printf '%s\xe2\x86\xbb\033[0m' "$c_ahead")"
+  fi
+
+  pr_seg=""
+  if [ -n "$pr_num" ]; then
+    case "$pr_state" in
+      approved)          pr_mark=$(printf '\033[32m\xe2\x9c\x93\033[0m') ;;
+      changes_requested) pr_mark=$(printf '\033[31m\xe2\x9c\x97\033[0m') ;;
+      pending)           pr_mark=$(printf '\033[38;5;214m\xe2\x97\x8b\033[0m') ;;
+      draft)             pr_mark=$(printf '\033[38;5;244m\xe2\x97\x8c\033[0m') ;;
+      *)                 pr_mark="" ;;
+    esac
+    pr_seg=" $(printf '\033[38;5;39m#%s\033[0m' "$pr_num")"
+    [ -n "$pr_mark" ] && pr_seg="${pr_seg} ${pr_mark}"
+  fi
+
+  row2="${dir} | ${branch}${git_icons}${pr_seg}"
 else
-  dir=$(echo "${cwd:-$(pwd)}" | sed "s|^$HOME|~|")
+  dir=${cwd:-$PWD}
+  case "$dir" in
+    "$HOME"*) dir="~${dir#"$HOME"}" ;;
+  esac
   row2="$dir"
 fi
 
